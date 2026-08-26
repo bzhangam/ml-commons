@@ -9,6 +9,7 @@ import static org.opensearch.ml.common.MLModel.MODEL_CONTENT_FIELD;
 import static org.opensearch.ml.common.MLModel.OLD_MODEL_CONTENT_FIELD;
 
 import java.security.AccessController;
+import java.security.Principal;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
@@ -253,9 +254,19 @@ public class RestActionUtils {
             return false;
         try {
             return AccessController.doPrivileged((PrivilegedExceptionAction<Boolean>) () -> {
-                String userContext = objectMapper.writeValueAsString(userObject);
-                final JsonNode node = objectMapper.readTree(userContext);
-                final String userName = node.get("name").asText();
+                // The security plugin's org.opensearch.security.user.User implements Principal and its
+                // getPrincipal() returns `this` (a direct self-reference with no @JsonIgnore). Serializing
+                // that bean throws "Direct self-reference leading to cycle" under Jackson 3. Since we only
+                // need the user name, read it directly from the Principal and avoid serializing the bean.
+                // See ml-commons issue #4990.
+                final String userName;
+                if (userObject instanceof Principal) {
+                    userName = ((Principal) userObject).getName();
+                } else {
+                    String userContext = objectMapper.writeValueAsString(userObject);
+                    final JsonNode node = objectMapper.readTree(userContext);
+                    userName = node.get("name").asText();
+                }
 
                 return isAdminDN(userName);
             });
